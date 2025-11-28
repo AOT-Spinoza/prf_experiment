@@ -35,7 +35,7 @@ def _rotate_origin_only(x, y, radians):
 
 
 class PRFBarPassSession(PylinkEyetrackerSession):
-    def __init__(self, output_str, output_dir, settings_file, eyetracker_on=True):
+    def __init__(self, output_str, output_dir, settings_file, eyetracker_on=True, run_nr=1):
         """Initializes StroopSession object.
 
         Parameters
@@ -47,6 +47,10 @@ class PRFBarPassSession(PylinkEyetrackerSession):
         settings_file : str
             Path to yaml-file with settings (default: None, which results in the package's
             default settings file (in data/default_settings.yml)
+        eyetracker_on : bool
+            Whether to use the eyetracker (default: True)
+        run_nr : int
+            The run number of this session (default: 1)
         """
         super().__init__(
             output_str,
@@ -54,6 +58,7 @@ class PRFBarPassSession(PylinkEyetrackerSession):
             settings_file=settings_file,
             eyetracker_on=eyetracker_on,
         )  # initialize parent class!
+        self.run_nr = run_nr
         # stimulus materials
         stim_file_path = os.path.join(
             os.path.split(__file__)[0],
@@ -148,6 +153,7 @@ class PRFBarPassSession(PylinkEyetrackerSession):
             "r",
         )
         self.bg_images = -1 + np.array(h5stimfile.get("stimuli")) / 128
+        self.sqrwv_images = -1 + np.array(h5stimfile.get("sqrwv_stimuli")) / 128
         h5stimfile.close()
 
         self.image_bg_stims = [
@@ -163,9 +169,23 @@ class PRFBarPassSession(PylinkEyetrackerSession):
             for bg_img in self.bg_images
         ]
 
+        self.sqrwv_bg_stims = [
+            GratingStim(
+                win=self.win,
+                tex=bg_img,
+                units="pix",
+                texRes=self.bg_images.shape[1],
+                colorSpace="rgb",
+                size=self.settings["stimuli"].get("stim_size_pixels"),
+                interpolate=True)
+            for bg_img in self.sqrwv_images
+        ]
+
         # draw all the bg stimuli once, before they are used in the trials
         for ibs in self.image_bg_stims:
             ibs.draw()
+        for sbs in self.sqrwv_bg_stims:
+            sbs.draw()
         intromask = GratingStim(
             self.win,
             tex=np.ones((4, 4)),
@@ -250,7 +270,7 @@ class PRFBarPassSession(PylinkEyetrackerSession):
 
         return op_apertures
 
-    def bar_stimulus_lookup(self, bar_width, bar_direction, bar_refresh_time):
+    def bar_stimulus_lookup(self, bar_width, bar_direction, bar_refresh_time, stim_list):
         """bar_stimulus_lookup creates a lookup-table for
         which apertures and which bg images will be shown when during this bar pass.
         They index different number of items, since the refresh of the bar and the bg
@@ -268,15 +288,14 @@ class PRFBarPassSession(PylinkEyetrackerSession):
             self.settings["design"].get("bar_duration")
             / self.settings["stimuli"].get("bg_stim_refresh_time")
         )
-
         # the following ensures that subsequent frames of the bg do not accidentally repeat
         bg_stim_frames = np.mod(
             np.cumsum(
                 np.random.randint(
-                    1, len(self.image_bg_stims) - 2, size=nr_bg_frames_par_pass + 2
+                    1, len(stim_list) - 2, size=nr_bg_frames_par_pass + 2
                 )
             ),
-            len(self.image_bg_stims),
+            len(stim_list),
         )
 
         return {
@@ -307,6 +326,8 @@ class PRFBarPassSession(PylinkEyetrackerSession):
         bar_directions = np.array(self.settings["stimuli"].get("bar_directions"))
         bar_widths = np.array(self.settings["stimuli"].get("bar_widths"))
         bar_refresh_times = np.array(self.settings["stimuli"].get("bar_refresh_times"))
+        bar_types = np.array(self.settings["stimuli"].get("bar_types"))[self.run_nr % 2]
+        print(f"Using bar type {bar_types} for run {self.run_nr}")
 
         # random ordering for bar parameters
         bws, brts = np.meshgrid(bar_widths, bar_refresh_times)
@@ -360,9 +381,16 @@ class PRFBarPassSession(PylinkEyetrackerSession):
                             )
                         )
                     else:
-
+                        bt = bar_types[k]
+                        if bt == 1:
+                            stim_list = self.image_bg_stims
+                        elif bt == 2:
+                            stim_list = self.sqrwv_bg_stims
                         blt = self.bar_stimulus_lookup(
-                            bar_width=bw, bar_direction=bd, bar_refresh_time=brt
+                            bar_width=bw,
+                            bar_direction=bd,
+                            bar_refresh_time=brt,
+                            stim_list=stim_list
                         )
                         self.trials.append(
                             BarPassTrial(
@@ -374,6 +402,7 @@ class PRFBarPassSession(PylinkEyetrackerSession):
                                 timing="seconds",
                                 aperture_sequence=blt["bar_display_frames"],
                                 bg_img_sequence=blt["bg_stim_frames"],
+                                stim_list=stim_list,
                                 verbose=True,
                                 draw_each_frame=False,
                             )
@@ -416,7 +445,7 @@ class PRFBarPassSession(PylinkEyetrackerSession):
     def close(self):
         h5_seq_file = os.path.join(self.output_dir, self.output_str + "_seq_timing.h5")
         for trial in self.trials:
-            if type(trial) == BarPassTrial:
+            if type(trial) is BarPassTrial:
                 trial.bg_img_sequence_df.to_hdf(
                     h5_seq_file,
                     key=f"trial_{str(trial.trial_nr).zfill(3)}/bg_imgs",

@@ -33,6 +33,7 @@ class BarPassTrial(Trial):
         timing,
         aperture_sequence,
         bg_img_sequence,
+        stim_list,
         verbose=True,
         draw_each_frame=False,
     ):
@@ -71,6 +72,7 @@ class BarPassTrial(Trial):
         )
         # print(self.parameters)
         # internalize these sequences and their expected times in the trials
+        self.stim_list = stim_list
 
         expected_aperture_times = (
             self.parameters["start_time"]
@@ -168,7 +170,7 @@ class BarPassTrial(Trial):
                 math.fmod(trial_display_time, self.parameters["bar_blank_interval"])
                 > self.parameters["bar_blank_duration"]
             ):
-                which_bg_stim = self.session.image_bg_stims[
+                which_bg_stim = self.stim_list[
                     int(self.bg_img_sequence_df["seq_index"].loc[bg_display_frame])
                 ]
 
